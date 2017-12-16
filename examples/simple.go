@@ -1,18 +1,3 @@
-# osin-xorm 
-
-## Encrypt your tokens
-
-Unfortunately, the osin library offers little capabilities for storing credentials like access or refresh tokens in a
-hashed or encrypted way. An attacker could gain access to your database through various attack vectors, steal these
-tokens and gain, for example, administrative access to your application.
-
-Please be aware, that this library stores all data as-is and does not perform any sort of encryption or hashing.
-
-## Usage
-
-First, install this library with `go get "github.com/chinahdkj/osin-xorm"`.
-
-```go
 package main
 
 // Open url in browser:
@@ -157,4 +142,3 @@ func main() {
 
 	http.ListenAndServe(":14000", nil)
 }
-```

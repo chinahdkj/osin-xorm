@@ -1,24 +1,34 @@
 package oxorm
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/RangelReale/osin"
+	"gopkg.in/mgo.v2/bson"
+
+	"github.com/chinahdkj/osin"
 	"github.com/chinahdkj/xorm"
 )
 
 type OauthClient struct {
 	Id          string  `json:"id" xorm:"pk VARCHAR(255) NOT NULL"`
 	Secret      string  `json:"secret" xorm:"VARCHAR(255) NOT NULL"`
-	Extra       *string `json:"extra" xorm:"VARCHAR(255) NOT NULL"`
-	RedirectUri string  `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
+	Extra       *string `json:"extra" xorm:"VARCHAR(255) NULL"`
+	RedirectUri *string `json:"redirect_uri" xorm:"VARCHAR(255) NULL"`
 }
 
 // Client id
 func (this *OauthClient) GetId() string {
 	return this.Id
+}
+
+func (this *OauthClient) ClientSecretMatches(secret string) bool {
+
+	return strings.ToUpper(SHA256(this.Id, "$", this.Secret)) == strings.ToUpper(secret)
 }
 
 // Client secret
@@ -28,7 +38,12 @@ func (this *OauthClient) GetSecret() string {
 
 // Base client uri
 func (this *OauthClient) GetRedirectUri() string {
-	return this.RedirectUri
+
+	if this.RedirectUri == nil {
+		return ""
+	}
+
+	return *this.RedirectUri
 }
 
 // Data to be passed to storage. Not used by the library.
@@ -40,24 +55,24 @@ type OauthAuthorize struct {
 	Client      string  `json:"client" xorm:"VARCHAR(255) NOT NULL"`
 	Code        string  `json:"code" xorm:"pk VARCHAR(255) NOT NULL"`
 	ExpiresIn   int64   `json:"expires_in" xorm:"INT(20) NOT NULL"`
-	Scope       string  `json:"scope" xorm:"VARCHAR(255) NOT NULL"`
+	Scope       *string `json:"scope" xorm:"VARCHAR(255) NULL"`
 	RedirectUri string  `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
-	State       string  `json:"state" xorm:"VARCHAR(255) NOT NULL"`
-	Extra       *string `json:"extra" xorm:"VARCHAR(255) NOT NULL"`
+	State       *string `json:"state" xorm:"VARCHAR(255) NULL"`
+	Extra       *string `json:"extra" xorm:"VARCHAR(255) NULL"`
 	CreatedAt   int64   `json:"created_at" xorm:"INT(20) NOT NULL"`
 }
 
 type OauthAccess struct {
-	AccessToken  string `json:"access_token" xorm:"pk VARCHAR(255) NOT NULL"`
-	Client       string `json:"client" xorm:"VARCHAR(255) NOT NULL"`
-	Authorize    string `json:"authorize" xorm:"VARCHAR(255) NOT NULL"`
-	Previous     string `json:"previous" xorm:"VARCHAR(255) NOT NULL"`
-	RefreshToken string `json:"refresh_token" xorm:"VARCHAR(255) NOT NULL"`
-	ExpiresIn    int64  `json:"expires_in" xorm:"INT(20) NOT NULL"`
-	Scope        string `json:"scope" xorm:"VARCHAR(255) NOT NULL"`
-	RedirectUri  string `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
-	Extra        string `json:"extra" xorm:"VARCHAR(255) NOT NULL"`
-	CreatedAt    int64  `json:"created_at" xorm:"INT(20) NOT NULL"`
+	AccessToken  string  `json:"access_token" xorm:"pk VARCHAR(255) NOT NULL"`
+	Client       string  `json:"client" xorm:"VARCHAR(255) NOT NULL"`
+	Authorize    *string `json:"authorize" xorm:"VARCHAR(255) NULL"`
+	Previous     *string `json:"previous" xorm:"VARCHAR(255) NULL"`
+	RefreshToken *string `json:"refresh_token" xorm:"VARCHAR(255) NULL"`
+	ExpiresIn    int64   `json:"expires_in" xorm:"INT(20) NOT NULL"`
+	Scope        *string `json:"scope" xorm:"VARCHAR(255) NULL"`
+	RedirectUri  string  `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
+	Extra        *string `json:"extra" xorm:"VARCHAR(255) NULL"`
+	CreatedAt    int64   `json:"created_at" xorm:"INT(20) NOT NULL"`
 }
 
 type OauthRefresh struct {
@@ -66,7 +81,7 @@ type OauthRefresh struct {
 }
 
 type OauthExpires struct {
-	Id        int64  `json:"id" xorm:"pk autoincr INT(20) NOT NULL"`
+	Id        string `json:"id" xorm:"pk VARCHAR(255) NOT NULL"`
 	Token     string `json:"token" xorm:"index VARCHAR(255) NOT NULL"`
 	ExpiresAt int64  `json:"expires_at" xorm:"index INT(20) NOT NULL"`
 }
@@ -140,11 +155,13 @@ func (s *Storage) CreateClient(c osin.Client) error {
 		return errors.New("Unsupported type!")
 	}
 
+	rd := c.GetRedirectUri()
+
 	client := &OauthClient{
 		Id:          c.GetId(),
 		Secret:      c.GetSecret(),
 		Extra:       extra,
-		RedirectUri: c.GetRedirectUri(),
+		RedirectUri: &rd,
 	}
 
 	_, err := s.db.Insert(client)
@@ -174,12 +191,14 @@ func (s *Storage) SaveAuthorize(data *osin.AuthorizeData) error {
 		return errors.New("Unsupported type!")
 	}
 
+	st := data.State
+
 	authorize := OauthAuthorize{
 		Client:      data.Client.GetId(),
 		Code:        data.Code,
 		ExpiresIn:   int64(data.ExpiresIn),
 		RedirectUri: data.RedirectUri,
-		State:       data.State,
+		State:       &st,
 		CreatedAt:   data.CreatedAt.Unix(),
 		Extra:       extra,
 	}
@@ -217,11 +236,19 @@ func (s *Storage) LoadAuthorize(code string) (*osin.AuthorizeData, error) {
 	authorize := osin.AuthorizeData{
 		Code:        data.Code,
 		ExpiresIn:   int32(data.ExpiresIn),
-		Scope:       data.Scope,
+		Scope:       "",
 		RedirectUri: data.RedirectUri,
-		State:       data.State,
+		State:       "",
 		CreatedAt:   time.Unix(data.CreatedAt, 0),
 		UserData:    data.Extra,
+	}
+
+	if data.Scope != nil {
+		authorize.Scope = *data.Scope
+	}
+
+	if data.State != nil {
+		authorize.State = *data.State
 	}
 
 	c, err := s.GetClient(cid)
@@ -336,13 +363,29 @@ func (s *Storage) LoadAccess(code string) (*osin.AccessData, error) {
 
 	cid = access.Client
 	result.AccessToken = access.AccessToken
-	prevAccessToken = access.Previous
-	result.RefreshToken = access.RefreshToken
+
+	if access.Previous != nil {
+		prevAccessToken = *access.Previous
+	}
+
+	if access.RefreshToken != nil {
+		result.RefreshToken = *access.RefreshToken
+	}
+
 	result.ExpiresIn = int32(access.ExpiresIn)
-	result.Scope = access.Scope
+
+	result.Scope = ""
+	if access.Scope != nil {
+		result.Scope = *access.Scope
+	}
+
 	result.RedirectUri = access.RedirectUri
 	result.CreatedAt = time.Unix(access.CreatedAt, 0)
-	extra = access.Extra
+
+	extra = ""
+	if access.Extra != nil {
+		extra = *access.Extra
+	}
 
 	result.UserData = extra
 	client, err := s.GetClient(cid)
@@ -378,7 +421,7 @@ func (s *Storage) RemoveAccess(code string) (err error) {
 func (s *Storage) LoadRefresh(code string) (*osin.AccessData, error) {
 
 	refresh := &OauthRefresh{}
-	ok, err := s.db.Sql(fmt.Sprintf("SELECT access FROM %srefresh WHERE token=? LIMIT 1", s.db.TableMapper.Obj2Table("oauth_refresh")), code).Get(&refresh)
+	ok, err := s.db.Sql(fmt.Sprintf("SELECT access FROM %s WHERE token=?", s.db.TableMapper.Obj2Table("oauth_refresh")), code).Get(refresh)
 
 	if !ok {
 		return nil, osin.ErrNotFound
@@ -415,7 +458,9 @@ func (s *Storage) CreateClientWithInformation(id string, secret string, redirect
 
 func (s *Storage) saveRefresh(tx *xorm.Session, refresh, access string) (err error) {
 
-	_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (token, access) VALUES (?, ?)", s.db.TableMapper.Obj2Table("oauth_refresh")), refresh, access)
+	_, err = tx.Exec(fmt.Sprintf(
+		"INSERT INTO %s ( token, access) VALUES (?, ?)", s.db.TableMapper.Obj2Table("oauth_refresh")),
+		refresh, access)
 
 	if err != nil {
 		if rbe := tx.Rollback(); rbe != nil {
@@ -431,7 +476,8 @@ func (s *Storage) saveRefresh(tx *xorm.Session, refresh, access string) (err err
 func (s *Storage) AddExpireAtData(code string, expireAt time.Time) error {
 
 	if _, err := s.db.Exec(
-		fmt.Sprintf("INSERT INTO %s(token, expires_at) VALUES(?, ?)", s.db.TableMapper.Obj2Table("oauth_expires")),
+		fmt.Sprintf("INSERT INTO %s (id, token, expires_at) VALUES(?, ?, ?)", s.db.TableMapper.Obj2Table("oauth_expires")),
+		bson.NewObjectId().Hex(),
 		code,
 		expireAt.Unix(),
 	); err != nil {
@@ -450,4 +496,16 @@ func (s *Storage) RemoveExpireAtData(code string) error {
 	)
 
 	return err
+}
+
+func SHA256(sources ...string) string {
+
+	hash := sha256.New()
+
+	for _, source := range sources {
+		hash.Write([]byte(source))
+	}
+
+	md := hash.Sum(nil)
+	return hex.EncodeToString(md)
 }

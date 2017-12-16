@@ -56,7 +56,7 @@ type OauthAuthorize struct {
 	Code        string  `json:"code" xorm:"pk VARCHAR(255) NOT NULL"`
 	ExpiresIn   int64   `json:"expires_in" xorm:"INT(20) NOT NULL"`
 	Scope       *string `json:"scope" xorm:"VARCHAR(255) NULL"`
-	RedirectUri string  `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
+	RedirectUri *string `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
 	State       *string `json:"state" xorm:"VARCHAR(255) NULL"`
 	Extra       *string `json:"extra" xorm:"VARCHAR(255) NULL"`
 	CreatedAt   int64   `json:"created_at" xorm:"INT(20) NOT NULL"`
@@ -70,7 +70,7 @@ type OauthAccess struct {
 	RefreshToken *string `json:"refresh_token" xorm:"VARCHAR(255) NULL"`
 	ExpiresIn    int64   `json:"expires_in" xorm:"INT(20) NOT NULL"`
 	Scope        *string `json:"scope" xorm:"VARCHAR(255) NULL"`
-	RedirectUri  string  `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
+	RedirectUri  *string `json:"redirect_uri" xorm:"VARCHAR(255) NOT NULL"`
 	Extra        *string `json:"extra" xorm:"VARCHAR(255) NULL"`
 	CreatedAt    int64   `json:"created_at" xorm:"INT(20) NOT NULL"`
 }
@@ -197,7 +197,7 @@ func (s *Storage) SaveAuthorize(data *osin.AuthorizeData) error {
 		Client:      data.Client.GetId(),
 		Code:        data.Code,
 		ExpiresIn:   int64(data.ExpiresIn),
-		RedirectUri: data.RedirectUri,
+		RedirectUri: &data.RedirectUri,
 		State:       &st,
 		CreatedAt:   data.CreatedAt.Unix(),
 		Extra:       extra,
@@ -237,10 +237,14 @@ func (s *Storage) LoadAuthorize(code string) (*osin.AuthorizeData, error) {
 		Code:        data.Code,
 		ExpiresIn:   int32(data.ExpiresIn),
 		Scope:       "",
-		RedirectUri: data.RedirectUri,
 		State:       "",
+		RedirectUri: "",
 		CreatedAt:   time.Unix(data.CreatedAt, 0),
 		UserData:    data.Extra,
+	}
+
+	if data.RedirectUri != nil {
+		authorize.RedirectUri = *data.RedirectUri
 	}
 
 	if data.Scope != nil {
@@ -379,7 +383,10 @@ func (s *Storage) LoadAccess(code string) (*osin.AccessData, error) {
 		result.Scope = *access.Scope
 	}
 
-	result.RedirectUri = access.RedirectUri
+	if access.RedirectUri != nil {
+		result.RedirectUri = *access.RedirectUri
+	}
+
 	result.CreatedAt = time.Unix(access.CreatedAt, 0)
 
 	extra = ""
